@@ -26,6 +26,12 @@
   header{padding:18px 16px 6px;max-width:1180px;margin:0 auto}
   header h1{margin:0;font-size:22px;letter-spacing:-.01em}
   header p{margin:4px 0 0;color:var(--muted);font-size:13px}
+  .topbar{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+  .seg{display:inline-flex;align-items:center;gap:0;border:1px solid var(--line);border-radius:10px;background:var(--card);padding:3px;box-shadow:var(--shadow)}
+  .seg .seg-label{font-size:12px;color:var(--muted);padding:0 10px}
+  .seg label{margin:0;font-size:13px;color:var(--ink);padding:7px 12px;border-radius:8px;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+  .seg label:has(input:checked){background:var(--accent);color:var(--accent-ink);font-weight:600}
+  .seg input{appearance:none;width:0;height:0;margin:0}
   main{max-width:1180px;margin:0 auto;padding:10px 16px 40px;display:grid;grid-template-columns:1fr;gap:16px}
   @media (min-width:900px){ main{grid-template-columns:440px 1fr;align-items:start} }
   .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;box-shadow:var(--shadow)}
@@ -77,7 +83,14 @@
 </head>
 <body>
 <header>
-  <h1>Repair Price Desk <span class="muted" style="font-weight:500;font-size:15px">Appliance Repair Regular</span></h1>
+  <div class="topbar">
+    <h1>Repair Price Desk <span class="muted" style="font-weight:500;font-size:15px">Appliance Repair Regular</span></h1>
+    <div class="seg" role="group" aria-label="Technician pay mode">
+      <span class="seg-label">Technician pay:</span>
+      <label><input type="radio" name="paymode" value="hourly" checked> Hourly rate</label>
+      <label><input type="radio" name="paymode" value="fixed"> Fixed by category</label>
+    </div>
+  </div>
 </header>
 <main>
   <section class="card" aria-label="Inputs">
@@ -300,6 +313,19 @@
     const link = $('part_auto'); if (link) link.addEventListener('click', e => { e.preventDefault(); applyAutoPart(true); calc(); });
   }
 
+  // ---------- fixed pay by category (same rule as the Excel price list) ----------
+  const CAT_NAME = {A: 'Minor', B: 'Average', C: 'Major', D: 'Sealed system'};
+  function catOf(rp){ if (!rp) return 'Average'; if (rp.tier === 'D' && !/EPA/.test(rp.skill || '')) return 'Major'; return CAT_NAME[rp.tier]; }
+  function fixedPay(s, rp){
+    const cat = catOf(rp);
+    const items = unit().repairs.filter(r => catOf(r) === cat);
+    const avg = items.length ? items.reduce((a, r) => a + r.hours, 0) / items.length : unit().avg_hours;
+    const mult = cat === 'Sealed system' ? s.sealed_mult : 1;
+    const step = Math.max(1, s.round_to);
+    return {cat, n: items.length, avg, pay: Math.round((avg + s.diag_hours) * s.rate * mult / step) * step};
+  }
+  function payMode(){ const el = document.querySelector('input[name="paymode"]:checked'); return el ? el.value : 'hourly'; }
+
   // ---------- main calculation ----------
   function calc(){
     const s = readSettings();
@@ -310,9 +336,14 @@
     const hoursRepair = rep ? rep.hours : unit().avg_hours;
     const hours = s.diag_hours + hoursRepair + ($('second').checked ? s.second_visit_hours : 0) + ($('access').checked ? s.access_addon_hours : 0);
     const sealed = !!(rep && /EPA/.test(rep.skill || '')); const rateEff = s.rate * (sealed ? s.sealed_mult : 1);
-    const T = hours * rateEff;
+    const addons = ($('second').checked ? s.second_visit_hours : 0) + ($('access').checked ? s.access_addon_hours : 0);
+    const FX = fixedPay(s, rep); const fixedMode = payMode() === 'fixed';
+    const T = fixedMode ? FX.pay + addons * s.rate : hours * rateEff;
+    const techLine = fixedMode
+      ? `fixed ${unit().name} / ${FX.cat} ${fmt(FX.pay)} (${FX.n} repairs, avg ${FX.avg.toFixed(1)} h + ${s.diag_hours.toFixed(1)} h diagnosis)${addons ? ' + add-ons ' + fmt(addons * s.rate) : ''}`
+      : `${hours.toFixed(1)} h x ${fmt(rateEff)}/h${sealed ? ' (sealed system x' + s.sealed_mult.toFixed(2) + ')' : ''}`;
     $('second_hint').textContent = rep ? (rep.second === 'Common' ? '(usually needed for this repair)' : rep.second === 'Sometimes' ? '(sometimes needed)' : '') : '';
-    $('repair_hint').textContent = rep ? `${rep.code}, tier ${rep.tier}${rep.applies && rep.applies !== 'All' && rep.applies !== 'All types' ? ', applies to: ' + rep.applies : ''}. Typical complaint: ${rep.complaints.join(', ') || 'various'}.` : 'Pick the repair once the technician has diagnosed the unit; until then the average for the appliance is used.';
+    $('repair_hint').textContent = rep ? `${rep.code}, tier ${rep.tier} = category ${FX.cat}${rep.applies && rep.applies !== 'All' && rep.applies !== 'All types' ? ', applies to: ' + rep.applies : ''}. Typical complaint: ${rep.complaints.join(', ') || 'various'}.` : 'Pick the repair once the technician has diagnosed the unit; until then the average for the appliance is used.';
 
     const H = lookupHistory();
     const SIM = similarJobs(P, s, H.factor); const simOK = SIM && SIM.n >= s.similar_min_n;
@@ -353,7 +384,7 @@
     $('o_rec').textContent = viable ? fmt(rec) : 'not viable'; $('o_rec_s').textContent = viable ? recSrc : 'break-even is above the maximum';
     $('o_min').textContent = fmt(min); $('o_min_s').textContent = minSrc;
     $('o_max').textContent = fmt(max); $('o_max_s').textContent = maxSrc;
-    $('o_tech').textContent = fmt(T); $('o_tech_s').textContent = `${hours.toFixed(1)} h x ${fmt(rateEff)}/h${sealed ? ' (sealed system x' + s.sealed_mult.toFixed(2) + ')' : ''}`;
+    $('o_tech').textContent = fmt(T); $('o_tech_s').textContent = techLine;
     $('o_part').textContent = fmt(P); $('o_part_s').textContent = P > 0 ? (viable ? `${pct1(P/rec)} of the recommended price` : `${pct1(P/max)} of the maximum`) : 'no part';
     $('o_office').textContent = viable ? fmt(office) : '-'; $('o_office_s').textContent = viable ? `${pct(officeShare)} of labor after part and ${pct(s.card_fee)} fee (${pct(office/rec)} of price)` : 'job not viable';
     $('o_office_card').className = 'stat ' + (!viable || officeShare < 0 ? 'badbg' : officeShare < s.office_warn ? 'warnbg' : 'okbg');
@@ -370,7 +401,7 @@
     const rows = [
       ['Hours', `${s.diag_hours.toFixed(1)} diagnosis + ${hoursRepair.toFixed(1)} repair${$('second').checked ? ' + ' + s.second_visit_hours.toFixed(1) + ' second visit' : ''}${$('access').checked ? ' + ' + s.access_addon_hours.toFixed(1) + ' access' : ''} = ${hours.toFixed(1)} h`],
       ['Repair time basis', rep ? `${rep.code} ${rep.name} (tier ${rep.tier})` : `average of all A-C repairs for ${unit().name}`],
-      ['Technician pay', `${hours.toFixed(1)} h x ${fmt(rateEff)} = ${fmt(T)} (does not drive the price; only the floor)`],
+      ['Technician pay', `${fixedMode ? 'fixed by category: ' : ''}${techLine} = ${fmt(T)} (does not drive the price; only the floor)`],
       ['Part cost used', `${fmt(P)}${partManual ? ' (entered manually)' : ' (auto: ' + autoPart().text.replace('Auto ' + fmt(autoPart().value) + ' = ', '') + ')'}`],
       ['Labor benchmark', `p25 ${fmt(L.p25)} / median ${fmt(L.p50)} / p75 ${fmt(L.p75)} / p90 ${fmt(L.p90)}`],
       ['Benchmark source', laborSrc],
@@ -398,7 +429,7 @@
       `${brandObj() ? brandObj().display : ''} ${unit().name} - ${rep ? rep.name : 'repair not diagnosed yet'} [Regular]`,
       viable ? `Recommended price: ${fmt(rec)}  (min ${fmt(min)}, max ${fmt(max)} = ${maxSrc})` : `NOT VIABLE: floor ${fmt(marginFloor)} (${pct(s.office_min)} office share) is above the maximum ${fmt(max)} (${maxSrc})`,
       `Part: ${fmt(P)}${P > 0 ? ' = ' + pct1(P/rec) + ' of price' : ''}`,
-      `Technician pay: ${fmt(T)} (${hours.toFixed(1)} h x ${fmt(rateEff)}/h)`,
+      `Technician pay: ${fmt(T)} (${techLine})`,
       viable ? `Office keeps: ${fmt(office)} (${pct(officeShare)} of labor)` : 'Recommend replacement or a cheaper part',
       `Benchmark: ${laborSrc}`
     ].join('\n');
@@ -406,6 +437,8 @@
 
   // ---------- wiring ----------
   loadSettings();
+  try { const m = localStorage.getItem('rpd3_paymode'); if (m) { const el = document.querySelector(`input[name="paymode"][value="${m}"]`); if (el) el.checked = true; } } catch(e){}
+  document.querySelectorAll('input[name="paymode"]').forEach(el => el.addEventListener('change', () => { try { localStorage.setItem('rpd3_paymode', payMode()); } catch(e){} calc(); }));
   fillRepairs();
   applyAutoPart(true);
   $('unit').addEventListener('change', () => { fillRepairs(); applyAutoPart(true); calc(); });
