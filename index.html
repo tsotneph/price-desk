@@ -87,8 +87,8 @@
     <h1>Repair Price Desk <span class="muted" style="font-weight:500;font-size:15px">Appliance Repair Regular</span></h1>
     <div class="seg" role="group" aria-label="Technician pay mode">
       <span class="seg-label">Technician pay:</span>
-      <label><input type="radio" name="paymode" value="hourly" checked> Hourly rate</label>
-      <label><input type="radio" name="paymode" value="fixed"> Fixed by category</label>
+      <label><input type="radio" name="paymode" value="fixed" checked> Fixed by category</label>
+      <label><input type="radio" name="paymode" value="hourly"> Hourly rate</label>
     </div>
   </div>
 </header>
@@ -324,7 +324,7 @@
     const step = Math.max(1, s.round_to);
     return {cat, n: items.length, avg, pay: Math.round((avg + s.diag_hours) * s.rate * mult / step) * step};
   }
-  function payMode(){ const el = document.querySelector('input[name="paymode"]:checked'); return el ? el.value : 'hourly'; }
+  function payMode(){ const el = document.querySelector('input[name="paymode"]:checked'); return el ? el.value : 'fixed'; }
 
   // ---------- main calculation ----------
   function calc(){
@@ -437,8 +437,8 @@
 
   // ---------- wiring ----------
   loadSettings();
-  try { const m = localStorage.getItem('rpd3_paymode'); if (m) { const el = document.querySelector(`input[name="paymode"][value="${m}"]`); if (el) el.checked = true; } } catch(e){}
-  document.querySelectorAll('input[name="paymode"]').forEach(el => el.addEventListener('change', () => { try { localStorage.setItem('rpd3_paymode', payMode()); } catch(e){} calc(); }));
+  try { const m = localStorage.getItem('rpd3_paymode_v2'); if (m) { const el = document.querySelector(`input[name="paymode"][value="${m}"]`); if (el) el.checked = true; } } catch(e){}
+  document.querySelectorAll('input[name="paymode"]').forEach(el => el.addEventListener('change', () => { try { localStorage.setItem('rpd3_paymode_v2', payMode()); } catch(e){} calc(); }));
   fillRepairs();
   applyAutoPart(true);
   $('unit').addEventListener('change', () => { fillRepairs(); applyAutoPart(true); calc(); });
