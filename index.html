@@ -77,6 +77,15 @@
   .vals{display:grid;grid-template-columns:1fr 1fr;gap:6px 10px;margin-top:6px}
   .vals label{margin:0;font-size:12px}
   .vals input{padding:6px 8px}
+  .row.single{grid-template-columns:1fr}
+  .grid3.inputs label{margin-top:0}
+  .unitsw{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;margin-left:6px;vertical-align:middle}
+  .unitsw button{padding:2px 8px;border:0;border-radius:0;font-size:12px;background:var(--card);color:var(--muted)}
+  .unitsw button.on{background:var(--accent);color:var(--accent-ink);font-weight:600}
+  .mtab{margin-top:10px}
+  .mtab td:not(:first-child),.mtab th:not(:first-child){text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .mtab tr.total td{font-weight:700}
+  .mtab tr.bad td{color:var(--bad)} .mtab tr.warn td{color:var(--warn)} .mtab tr.ok td{color:var(--ok)}
   footer{max-width:1180px;margin:0 auto;padding:0 16px 30px;font-size:12px;color:var(--muted)}
   @media (max-width:520px){ .grid3{grid-template-columns:1fr} .row{grid-template-columns:1fr} .stat .v{font-size:22px} .vals{grid-template-columns:1fr} }
 </style>
@@ -102,9 +111,9 @@
     <div class="hint" id="repair_hint"></div>
     <label for="brand">Brand</label>
     <select id="brand"></select>
-    <div class="row">
-      <div>
-        <label for="rate">Technician rate, $ per hour</label>
+    <div class="row" id="money_row">
+      <div id="rate_wrap">
+        <label for="rate" id="rate_label">Technician rate, $ per hour</label>
         <input type="number" id="rate" min="0" step="1">
       </div>
       <div>
@@ -119,7 +128,7 @@
     <div class="check"><input type="checkbox" id="access"><label for="access" style="margin:0">Hard access: stacked / built-in / over-the-range</label></div>
     <details>
       <summary>Rules and defaults</summary>
-      <div class="row">
+      <div class="row" id="settings_row">
         <div><label for="s_diag">Diagnosis time, h</label><input type="number" id="s_diag" step="0.1" min="0"></div>
         <div><label for="s_fee">Card fee, %</label><input type="number" id="s_fee" step="0.1" min="0"></div>
         <div><label for="s_cap">Max price benchmark, % of new unit value</label><input type="number" id="s_cap" step="1" min="1"></div>
@@ -155,6 +164,22 @@
       <div class="stat"><div class="k">Technician gets</div><div class="v" id="o_tech">-</div><div class="s" id="o_tech_s"></div></div>
       <div class="stat"><div class="k">Part</div><div class="v" id="o_part">-</div><div class="s" id="o_part_s"></div></div>
       <div class="stat" id="o_office_card"><div class="k">Office keeps (at recommended)</div><div class="v" id="o_office">-</div><div class="s" id="o_office_s"></div></div>
+    </div>
+
+    <div class="manual" id="manual">
+      <h2 style="margin-top:18px">Manual check <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:500">- enter your own numbers, see every share</span></h2>
+      <div class="grid3 inputs">
+        <div><label for="m_price">Job price, $</label><input type="number" id="m_price" min="0" step="1"></div>
+        <div><label for="m_part">Part cost, $</label><input type="number" id="m_part" min="0" step="1"></div>
+        <div>
+          <label for="m_tech">Technician's share
+            <span class="unitsw" role="group" aria-label="Technician share unit"><button type="button" id="m_unit_usd" class="on">$</button><button type="button" id="m_unit_pct">% of labor</button></span>
+          </label>
+          <input type="number" id="m_tech" min="0" step="1">
+        </div>
+      </div>
+      <div class="hint" id="m_hint"></div>
+      <table class="mtab" id="m_table"></table>
     </div>
 
     <div class="actions" style="margin-top:14px">
@@ -325,6 +350,69 @@
     return {cat, n: items.length, avg, pay: Math.round((avg + s.diag_hours) * s.rate * mult / step) * step};
   }
   function payMode(){ const el = document.querySelector('input[name="paymode"]:checked'); return el ? el.value : 'fixed'; }
+  // In "Fixed by category" the hourly rate is not a job input: it moves into Rules and defaults as the basis of the fixed table.
+  function applyMode(){
+    const fixed = payMode() === 'fixed'; const w = $('rate_wrap');
+    if (fixed) { $('settings_row').prepend(w); $('rate_label').textContent = 'Hourly rate behind the fixed pay table, $/h'; $('money_row').classList.add('single'); }
+    else { $('money_row').prepend(w); $('rate_label').textContent = 'Technician rate, $ per hour'; $('money_row').classList.remove('single'); }
+  }
+
+  // ---------- manual check: your own price / part / technician share, every share in % ----------
+  const mEd = {price: false, part: false, tech: false};
+  let mUnit = 'usd', lastQuote = null, lastSettings = null;
+  function syncManual(){
+    if (!lastQuote) return; const Q = lastQuote;
+    if (!mEd.price) $('m_price').value = Q.price > 0 ? Math.round(Q.price) : '';
+    if (!mEd.part) $('m_part').value = Math.round(Q.part);
+    if (!mEd.tech) $('m_tech').value = mUnit === 'usd' ? Math.round(Q.tech) : (Q.techShare != null ? Math.round(Q.techShare * 1000) / 10 : '');
+    renderManual();
+  }
+  function manualNumbers(){
+    const s = lastSettings || DATA.defaults;
+    const price = Math.max(0, parseFloat($('m_price').value) || 0);
+    const part = Math.max(0, parseFloat($('m_part').value) || 0);
+    const fee = price * s.card_fee; const labor = price - fee - part;
+    const tv = Math.max(0, parseFloat($('m_tech').value) || 0);
+    const tech = mUnit === 'usd' ? tv : Math.max(0, labor) * tv / 100;
+    return {s, price, part, fee, labor, tech, office: labor - tech};
+  }
+  function renderManual(){
+    const M = manualNumbers(); const {s, price, part, fee, labor, tech, office} = M;
+    const ofP = x => price > 0 ? pct1(x / price) : '-'; const ofL = x => labor > 0 ? pct1(x / labor) : '-';
+    const offShare = labor > 0 ? office / labor : NaN;
+    const offCls = price === 0 ? '' : (office < 0 ? 'bad' : (!isNaN(offShare) && offShare < s.office_warn ? 'warn' : 'ok'));
+    const rows = [
+      ['total', 'Job price', price, '100%', '-'],
+      ['', `Card fee (${pct1(s.card_fee)})`, fee, ofP(fee), '-'],
+      ['', 'Part', part, ofP(part), '-'],
+      ['total', 'Labor after fee and part', labor, ofP(labor), labor > 0 ? '100%' : '-'],
+      ['', `Technician${mUnit === 'pct' ? ' (' + (parseFloat($('m_tech').value) || 0) + '% of labor)' : ''}`, tech, ofP(tech), ofL(tech)],
+      [offCls, 'Office', office, ofP(office), ofL(office)],
+      ['', 'Technician + part (job cost)', tech + part, ofP(tech + part), '-'],
+    ];
+    $('m_table').innerHTML = '<tr><th>Item</th><th>$</th><th>% of price</th><th>% of labor</th></tr>' +
+      rows.map(r => `<tr class="${r[0]}"><td>${r[1]}</td><td>${price > 0 || r[2] ? fmt(r[2]) : '-'}</td><td>${r[3]}</td><td>${r[4]}</td></tr>`).join('');
+    const parts = [];
+    if (lastQuote && price > 0) {
+      if (lastQuote.viable && lastQuote.rec > 0) parts.push(`Your price is ${pct(price / lastQuote.rec)} of the recommended ${fmt(lastQuote.rec)} (${price >= lastQuote.rec ? '+' : '-'}${fmt(Math.abs(price - lastQuote.rec))})`);
+      if (lastQuote.max > 0) parts.push(`${pct(price / lastQuote.max)} of the maximum ${fmt(lastQuote.max)}`);
+      if (lastQuote.min > 0 && price < lastQuote.min - 0.5) parts.push(`below the minimum ${fmt(lastQuote.min)}`);
+    }
+    if (price > 0 && office < 0) parts.push('the office loses money at this price');
+    else if (price > 0 && !isNaN(offShare) && offShare < s.office_warn) parts.push(`office share below the ${pct(s.office_warn)} watch level`);
+    const edited = mEd.price || mEd.part || mEd.tech;
+    $('m_hint').innerHTML = (parts.length ? parts.join('; ') + '. ' : (price > 0 ? 'Prefilled from the quote above; type your own numbers to test a deal. ' : 'Enter a price to see the shares. ')) + (edited ? '<a href="#" id="m_reset">Use quote values</a>' : '');
+    const link = $('m_reset'); if (link) link.addEventListener('click', e => { e.preventDefault(); mEd.price = mEd.part = mEd.tech = false; syncManual(); });
+    window.__check = price > 0 ? `Check: price ${fmt(price)} | part ${fmt(part)} (${ofP(part)} of price) | technician ${fmt(tech)} (${ofL(tech)} of labor, ${ofP(tech)} of price) | office ${fmt(office)} (${ofL(office)} of labor, ${ofP(office)} of price)` : '';
+  }
+  function setUnit(u){
+    if (u === mUnit) return;
+    const M = manualNumbers();
+    mUnit = u; $('m_unit_usd').classList.toggle('on', u === 'usd'); $('m_unit_pct').classList.toggle('on', u === 'pct');
+    $('m_tech').step = u === 'usd' ? '1' : '0.5';
+    if (mEd.tech) $('m_tech').value = u === 'usd' ? Math.round(M.tech) : (M.labor > 0 ? Math.round(M.tech / M.labor * 1000) / 10 : '');
+    syncManual();
+  }
 
   // ---------- main calculation ----------
   function calc(){
@@ -433,12 +521,21 @@
       viable ? `Office keeps: ${fmt(office)} (${pct(officeShare)} of labor)` : 'Recommend replacement or a cheaper part',
       `Benchmark: ${laborSrc}`
     ].join('\n');
+
+    // manual check block follows the quote until the user edits it
+    lastSettings = s;
+    lastQuote = {price: viable ? rec : min, part: P, tech: T, techShare: laborNet > 0 ? T / laborNet : null, rec, min, max, viable};
+    syncManual();
   }
 
   // ---------- wiring ----------
   loadSettings();
   try { const m = localStorage.getItem('rpd3_paymode_v2'); if (m) { const el = document.querySelector(`input[name="paymode"][value="${m}"]`); if (el) el.checked = true; } } catch(e){}
-  document.querySelectorAll('input[name="paymode"]').forEach(el => el.addEventListener('change', () => { try { localStorage.setItem('rpd3_paymode_v2', payMode()); } catch(e){} calc(); }));
+  document.querySelectorAll('input[name="paymode"]').forEach(el => el.addEventListener('change', () => { try { localStorage.setItem('rpd3_paymode_v2', payMode()); } catch(e){} applyMode(); calc(); }));
+  applyMode();
+  ['m_price','m_part','m_tech'].forEach(id => $(id).addEventListener('input', () => { mEd[id.slice(2)] = true; renderManual(); }));
+  $('m_unit_usd').addEventListener('click', () => setUnit('usd'));
+  $('m_unit_pct').addEventListener('click', () => setUnit('pct'));
   fillRepairs();
   applyAutoPart(true);
   $('unit').addEventListener('change', () => { fillRepairs(); applyAutoPart(true); calc(); });
@@ -454,7 +551,7 @@
   });
   $('reset').addEventListener('click', () => { try { localStorage.removeItem('rpd3_settings'); } catch(e){} loadSettings(); calc(); });
   $('copy').addEventListener('click', async () => {
-    try { await navigator.clipboard.writeText(window.__quote || ''); $('copied').textContent = 'copied'; }
+    try { await navigator.clipboard.writeText((window.__quote || '') + (window.__check ? '\n' + window.__check : '')); $('copied').textContent = 'copied'; }
     catch(e) { $('copied').textContent = 'copy failed - select the text manually'; }
     setTimeout(() => $('copied').textContent = '', 2000);
   });
